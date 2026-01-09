@@ -29,9 +29,11 @@ import {
   ChevronLeft,
   ChevronRight,
   RefreshCw,
+  Menu,
   Eraser
 } from 'lucide-react';
 
+// --- 外部函式庫 CDN ---
 const FABRIC_URL = "https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js";
 const PDF_JS_URL = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
 const PDF_WORKER_URL = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
@@ -44,16 +46,29 @@ const App = () => {
   const [opacity, setOpacity] = useState(1);
   const [hasImage, setHasImage] = useState(false);
   
+  // 手機版屬性面板控制
+  const [showMobileProps, setShowMobileProps] = useState(false);
+  // 用於判斷是否為手機版
+  const [isMobileView, setIsMobileView] = useState(false);
+
+  // 手機版文字編輯專用狀態
+  const [showMobileTextEditor, setShowMobileTextEditor] = useState(false);
+  const [mobileEditingText, setMobileEditingText] = useState("");
+  const mobileInputRef = useRef(null);
+
+  // 縮放相關狀態
   const [zoomRatio, setZoomRatio] = useState(1);
   const zoomRatioRef = useRef(1);
   const baseDimensions = useRef({ width: 800, height: 600 }); 
   const scrollContainerRef = useRef(null);
   
+  // PDF 相關狀態
   const [pdfDoc, setPdfDoc] = useState(null); 
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
   const pageAnnotations = useRef({}); 
   
+  // 繪圖模式
   const [isDrawingMode, setIsDrawingMode] = useState(false);
   const [drawSettings, setDrawSettings] = useState({
     tool: 'pencil',
@@ -61,10 +76,15 @@ const App = () => {
     width: 5
   });
 
+  // Undo/Redo 歷史紀錄
   const canvasHistory = useRef([]);
   const historyIndex = useRef(-1);
   const isUndoing = useRef(false);
 
+  // 關鍵修正：用於標記是否正在進行內部物件置換 (如更新浮水印)
+  const isInternalUpdate = useRef(false);
+
+  // 浮水印設定
   const [watermarkConfig, setWatermarkConfig] = useState({
     text: "",
     gapX: 150,
@@ -81,9 +101,19 @@ const App = () => {
   const watermarkInputRef = useRef(null);
   
   const cropUI = useRef({ cropZone: null, dimmingRects: [], gridLines: [] });
-  const drawRef = useRef({ isMouseDown: false, startPos: { x: 0, y: 0 }, activeShape: null, isDrawingMode: false }); // Init isDrawingMode
+  const drawRef = useRef({ isMouseDown: false, startPos: { x: 0, y: 0 }, activeShape: null, isDrawingMode: false }); 
 
   const [exportMultiplier, setExportMultiplier] = useState(1);
+
+  // 監聽視窗大小以設定手機版狀態
+  useEffect(() => {
+    const checkMobile = () => setIsMobileView(window.innerWidth < 768);
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+
+  // --- 關鍵 Helper: 取得畫面可視中心點 ---
   const getVisibleCenter = useCallback(() => {
     if (!scrollContainerRef.current || !canvas) {
       return { 
@@ -115,12 +145,13 @@ const App = () => {
     };
   }, [canvas]);
 
+  // --- Undo/Redo 邏輯 ---
   const saveHistory = useCallback(() => {
     if (!canvas || isUndoing.current) return;
     if (historyIndex.current < canvasHistory.current.length - 1) {
       canvasHistory.current = canvasHistory.current.slice(0, historyIndex.current + 1);
     }
-    const json = canvas.toJSON(['isWatermark', 'watermarkText', 'watermarkGapX', 'watermarkGapY']); // 確保浮水印屬性被儲存
+    const json = canvas.toJSON(['isWatermark', 'watermarkText', 'watermarkGapX', 'watermarkGapY', 'watermarkIsGapXManual']); 
     canvasHistory.current.push(json);
     historyIndex.current = canvasHistory.current.length - 1;
   }, [canvas]);
@@ -146,6 +177,7 @@ const App = () => {
     });
   }, [canvas, drawSettings.tool]);
 
+  // --- 物件操作邏輯 ---
   const deleteSelected = useCallback(() => {
     if (!canvas) return;
     const active = canvas.getActiveObject();
@@ -183,10 +215,25 @@ const App = () => {
         }
         canvas.setActiveObject(cloned);
         canvas.requestRenderAll();
-      }, ['isWatermark', 'watermarkText', 'watermarkGapX', 'watermarkGapY']);
+      }, ['isWatermark', 'watermarkText', 'watermarkGapX', 'watermarkGapY', 'watermarkIsGapXManual']);
     }
   }, [canvas]);
 
+  // --- 手機版文字編輯確認與取消 ---
+  const confirmMobileTextEdit = () => {
+    if (!canvas || !activeObject) return;
+    activeObject.set('text', mobileEditingText);
+    canvas.renderAll();
+    saveHistory();
+    setShowMobileTextEditor(false);
+    canvas.setActiveObject(activeObject);
+  };
+
+  const cancelMobileTextEdit = () => {
+    setShowMobileTextEditor(false);
+  };
+
+  // --- 鍵盤監聽 ---
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
@@ -207,6 +254,7 @@ const App = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [undo, deleteSelected, duplicateSelected]);
 
+  // 初始化 Fabric
   useEffect(() => {
     const loadScript = (src) => {
       return new Promise((resolve, reject) => {
@@ -242,17 +290,33 @@ const App = () => {
           }
         });
 
+        fabricCanvas.on('text:editing:entered', (e) => {
+          if (window.innerWidth < 768) {
+            e.target.exitEditing();
+            setMobileEditingText(e.target.text);
+            setShowMobileTextEditor(true);
+            setShowMobileProps(false);
+          }
+        });
+
         const updateSelection = (e) => {
           if (drawRef.current.isDrawingMode) return;
           const obj = e.selected ? e.selected[0] : null;
           setActiveObject(obj);
           
+          if (!obj) {
+             // 如果不是內部更新，才關閉面板
+             if (!isInternalUpdate.current) {
+               setShowMobileProps(false);
+             }
+          }
+
           if (obj && obj.isWatermark) {
             setWatermarkConfig({
               text: (obj.watermarkText !== undefined) ? obj.watermarkText : "WATERMARK",
               gapX: obj.watermarkGapX || 150,
               gapY: obj.watermarkGapY || 150,
-              isGapXManual: true 
+              isGapXManual: (obj.watermarkIsGapXManual !== undefined) ? obj.watermarkIsGapXManual : true 
             });
           } else {
             setWatermarkConfig(prev => ({ ...prev, text: "" }));
@@ -261,8 +325,13 @@ const App = () => {
 
         fabricCanvas.on('selection:created', updateSelection);
         fabricCanvas.on('selection:updated', updateSelection);
+        
+        // 修正：selection:cleared 增加 isInternalUpdate 判斷
         fabricCanvas.on('selection:cleared', () => {
+          if (isInternalUpdate.current) return;
+          
           setActiveObject(null);
+          setShowMobileProps(false);
           setWatermarkConfig(prev => ({ ...prev, text: "" }));
         });
 
@@ -275,6 +344,16 @@ const App = () => {
     };
   }, []);
 
+  // 當手機版編輯器開啟時，自動聚焦
+  useEffect(() => {
+    if (showMobileTextEditor && mobileInputRef.current) {
+      setTimeout(() => {
+        mobileInputRef.current.focus();
+        mobileInputRef.current.select(); 
+      }, 100);
+    }
+  }, [showMobileTextEditor]);
+
   useEffect(() => {
     if (!canvas) return;
     const handleModified = (e) => {
@@ -284,7 +363,8 @@ const App = () => {
         }
     };
     const handleAdded = (e) => {
-        if (e.target && !e.target.excludeFromExport && !isUndoing.current) {
+        // 如果是內部更新，不存歷史紀錄 (因為 updateWatermarkSettings 會手動存)
+        if (e.target && !e.target.excludeFromExport && !isUndoing.current && !isInternalUpdate.current) {
             saveHistory();
         }
     };
@@ -302,6 +382,7 @@ const App = () => {
     }
   }, [activeObject, isCropMode, isDrawingMode]);
 
+  // --- 繪圖模式 ---
   useEffect(() => {
     if (!canvas) return;
     if (isDrawingMode && drawSettings.tool === 'pencil') {
@@ -460,7 +541,8 @@ const App = () => {
     if (shape) {
       shape.setCoords();
       shape.set({ selectable: true, evented: true }); 
-      // saveHistory is handled by object:added
+      // saveHistory is handled by object:added (but manually saved for shape logic in onShapeUp usually if not triggered by added)
+      // Here we rely on object:added for shapes as they are added via canvas.add()
     }
     drawRef.current.activeShape = null;
   };
@@ -505,6 +587,8 @@ const App = () => {
       case 'draw':
         updateDrawSettings('tool', subTool || 'pencil');
         setIsDrawingMode(true);
+        // 手機版：切換到繪圖模式時，自動打開屬性面板供選色
+        setShowMobileProps(true);
         canvas.discardActiveObject();
         canvas.requestRenderAll();
         break;
@@ -562,11 +646,16 @@ const App = () => {
 
   const fitImageToScreen = useCallback((fabCanvas, imgObj, maintainZoom = false) => {
     if (!fabCanvas || !imgObj) return;
-    const padding = 80; 
-    const sidebarWidth = 80 + 288;
-    const headerHeight = 64;
-    const availableWidth = window.innerWidth - sidebarWidth - padding;
-    const availableHeight = window.innerHeight - headerHeight - padding;
+    const container = scrollContainerRef.current;
+    let availableWidth, availableHeight;
+
+    if (container) {
+       availableWidth = container.clientWidth - 40; 
+       availableHeight = container.clientHeight - 40;
+    } else {
+       availableWidth = window.innerWidth - 40;
+       availableHeight = window.innerHeight - 200;
+    }
 
     let scale = 1;
     if (imgObj.width > availableWidth || imgObj.height > availableHeight) {
@@ -587,22 +676,32 @@ const App = () => {
       zoomRatioRef.current = 1;
     }
 
+    if (!maintainZoom) {
+       fabCanvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
+    }
+
     fabCanvas.setDimensions({ width: displayWidth * targetZoom, height: displayHeight * targetZoom });
     fabCanvas.setZoom(targetZoom);
 
-    imgObj.scale(scale);
-    fabCanvas.setBackgroundImage(imgObj, fabCanvas.renderAll.bind(fabCanvas), {
-      originX: 'center',
-      originY: 'center',
-      left: displayWidth / 2, 
-      top: displayHeight / 2
+    imgObj.set({
+      originX: 'left',
+      originY: 'top',
+      left: 0,
+      top: 0,
+      scaleX: displayWidth / imgObj.width,
+      scaleY: displayHeight / imgObj.height,
+      strokeWidth: 0
+    });
+
+    fabCanvas.setBackgroundImage(imgObj, () => {
+        fabCanvas.renderAll();
+        if (!maintainZoom) {
+            canvasHistory.current = [fabCanvas.toJSON()];
+            historyIndex.current = 0;
+        }
     });
 
     setExportMultiplier(1 / scale);
-    if (!maintainZoom) {
-        canvasHistory.current = [fabCanvas.toJSON()];
-        historyIndex.current = 0;
-    }
   }, []);
 
   // --- PDF & File Logic ---
@@ -630,7 +729,7 @@ const App = () => {
         pageAnnotations.current = {}; 
         loadPage(pdf, 1, false); 
       } catch (error) {
-        alert("Failed to load PDF");
+        alert("PDF 讀取失敗");
         console.error(error);
         return;
       }
@@ -666,14 +765,17 @@ const App = () => {
       const savedJSON = pageAnnotations.current[pageNum];
       if (savedJSON) {
         canvas.loadFromJSON(savedJSON, () => {
-          canvas.setBackgroundImage(img, canvas.renderAll.bind(canvas), {
-            originX: 'center',
-            originY: 'center',
-            left: baseDimensions.current.width / 2, 
-            top: baseDimensions.current.height / 2,
-            scaleX: img.scaleX,
-            scaleY: img.scaleY
+          const displayWidth = baseDimensions.current.width;
+          const displayHeight = baseDimensions.current.height;
+          img.set({
+             originX: 'left',
+             originY: 'top',
+             left: 0,
+             top: 0,
+             scaleX: displayWidth / img.width,
+             scaleY: displayHeight / img.height
           });
+          canvas.setBackgroundImage(img, canvas.renderAll.bind(canvas));
           canvas.getObjects().forEach(obj => { obj.setCoords(); });
           canvasHistory.current = [canvas.toJSON()];
           historyIndex.current = 0;
@@ -733,7 +835,9 @@ const App = () => {
     const center = getVisibleCenter();
     const currentZoom = zoomRatioRef.current;
     const baseWidth = baseDimensions.current.width;
-    const fontSize = Math.max(12, (baseWidth / 25) / currentZoom);
+    // 修正：手機版預設字體加大
+    const isMobile = window.innerWidth < 768;
+    const fontSize = Math.max(isMobile ? 24 : 12, (baseWidth / (isMobile ? 15 : 25)) / currentZoom);
 
     const text = new window.fabric.IText('Click to edit', {
       left: center.x,
@@ -746,9 +850,17 @@ const App = () => {
     });
     canvas.add(text);
     canvas.setActiveObject(text);
-    text.enterEditing();
-    text.selectAll();
-    // saveHistory via object:added
+    
+    // 如果是桌面版，直接進入編輯
+    if (!isMobile) {
+      text.enterEditing();
+      text.selectAll();
+    } 
+    // 如果是手機版，會由 text:editing:entered 事件接手處理彈出窗
+    else {
+      // 觸發一次 enterEditing 以觸發事件，然後事件處理器會接手
+      text.enterEditing();
+    }
   };
 
   const addImageWatermark = (e) => {
@@ -769,7 +881,7 @@ const App = () => {
         });
         canvas.add(img);
         canvas.setActiveObject(img);
-        // saveHistory via object:added
+        saveHistory();
       });
     };
     reader.readAsDataURL(file);
@@ -785,8 +897,8 @@ const App = () => {
     }
   };
 
-  // --- Watermark & Crop Logic ---
-  const generateWatermarkGroup = (text, gapX, gapY, currentOpacity = 1, currentFill = 'rgba(0,0,0,0.15)') => {
+  // --- Watermark Logic ---
+  const generateWatermarkGroup = (text, gapX, gapY, currentOpacity = 1, currentFill = 'rgba(0,0,0,0.15)', isGapXManual = false) => {
     const rawWidth = canvas.width / zoomRatio;
     const rawHeight = canvas.height / zoomRatio;
     const fontSize = Math.max(20, rawWidth / 20); 
@@ -822,7 +934,8 @@ const App = () => {
       isWatermark: true,
       watermarkText: text,
       watermarkGapX: gapX,
-      watermarkGapY: gapY
+      watermarkGapY: gapY,
+      watermarkIsGapXManual: isGapXManual 
     });
     return group;
   };
@@ -831,11 +944,13 @@ const App = () => {
     if (!activeObject || !activeObject.isWatermark) return;
     
     let newConfig = { ...watermarkConfig, [key]: value };
-    
+    let isGapXManual = watermarkConfig.isGapXManual;
+
     if (key === 'text') {
-      if (!newConfig.isGapXManual) {
+      if (!isGapXManual) {
         const fontSize = Math.max(20, (canvas.width / zoomRatioRef.current) / 20);
-        const tempText = new window.fabric.Text(value || " ", {
+        const safeText = value || " "; 
+        const tempText = new window.fabric.Text(safeText, {
              fontSize: fontSize,
              fontFamily: 'sans-serif',
              fontWeight: 'bold'
@@ -847,6 +962,7 @@ const App = () => {
 
     if (key === 'gapX') {
        newConfig.isGapXManual = true;
+       isGapXManual = true;
     }
 
     setWatermarkConfig(newConfig);
@@ -855,18 +971,23 @@ const App = () => {
     const firstObj = activeObject.getObjects()[0];
     const currentFill = firstObj ? firstObj.fill : 'rgba(0,0,0,0.15)';
     
+    // 關鍵：標記內部更新
+    isInternalUpdate.current = true;
     canvas.remove(activeObject);
     const newGroup = generateWatermarkGroup(
       newConfig.text, 
       parseInt(newConfig.gapX), 
       parseInt(newConfig.gapY), 
       currentOpacity, 
-      currentFill
+      currentFill,
+      isGapXManual
     );
     canvas.add(newGroup);
     canvas.setActiveObject(newGroup);
+    isInternalUpdate.current = false; // 重置
+
     canvas.requestRenderAll();
-    // saveHistory via object:added
+    saveHistory();
   };
 
   const addTextWatermark = () => {
@@ -879,7 +1000,7 @@ const App = () => {
     const defaultGapX = tempText.width + (fontSize * 3);
     const defaultGapY = Math.max(150, rawHeight / 4);
 
-    const group = generateWatermarkGroup(text, defaultGapX, defaultGapY);
+    const group = generateWatermarkGroup(text, defaultGapX, defaultGapY, 1, 'rgba(0,0,0,0.15)', false);
     canvas.add(group);
     canvas.setActiveObject(group);
     
@@ -890,10 +1011,14 @@ const App = () => {
       isGapXManual: false 
     });
     setOpacity(1);
+    
+    setShowMobileProps(true);
+
     canvas.requestRenderAll();
-    // saveHistory via object:added
+    saveHistory();
   };
 
+  // --- Crop Logic (Same as before) ---
   const updateCropUI = (cropRect) => {
     const { dimmingRects, gridLines } = cropUI.current;
     const left = cropRect.left;
@@ -1054,7 +1179,7 @@ const App = () => {
         tempFabric.dispose();
       }
       
-      pdf.save('openeditor-multipage.pdf');
+      pdf.save('pixelcraft-multipage.pdf');
     } catch (e) {
       console.error(e);
       alert("Failed to export");
@@ -1113,20 +1238,41 @@ const App = () => {
         </div>
       </header>
 
-      <div className="flex flex-1 overflow-hidden relative">
-        <aside className="w-20 bg-white border-r flex flex-col items-center py-6 gap-4 shadow-sm z-10 overflow-y-auto">
-          <ToolButton icon={<Upload size={22} />} label="Open" onClick={() => switchToMode('open')} disabled={isCropMode || isDrawingMode} />
+      {/* Main Layout Area - Responsive */}
+      <div className="flex-1 flex flex-col md:flex-row overflow-hidden relative">
+        
+        {/* Left Sidebar (Desktop) / Bottom Navigation (Mobile) */}
+        <aside className="
+          z-30 bg-white border-t md:border-t-0 md:border-r 
+          flex flex-row md:flex-col items-center justify-around md:justify-start 
+          py-2 md:py-6 gap-2 md:gap-4 shadow-lg md:shadow-sm 
+          order-2 md:order-1 
+          w-full md:w-20 h-16 md:h-full 
+          overflow-x-auto md:overflow-y-auto overflow-y-hidden
+          fixed bottom-0 md:relative
+        ">
+          {/* 修正：在手機版顯示屬性按鈕，桌面版顯示開啟按鈕 */}
+          {activeObject && isMobileView ? (
+             <ToolButton icon={<Settings size={22} />} label="Attrs" onClick={() => setShowMobileProps(true)} />
+          ) : (
+             <ToolButton icon={<Upload size={22} />} label="Open" onClick={() => switchToMode('open')} disabled={isCropMode || isDrawingMode} />
+          )}
+
           <ToolButton icon={<Crop size={22} />} label="Crop" onClick={() => switchToMode('crop')} active={isCropMode} disabled={!hasImage} />
           <ToolButton icon={<Type size={22} />} label="Text" onClick={() => switchToMode('text')} disabled={!hasImage} />
           <ToolButton icon={<ImageIcon size={22} />} label="Image" onClick={() => switchToMode('image')} disabled={!hasImage} />
           <ToolButton icon={<PenTool size={22} />} label="Draw" onClick={() => switchToMode('draw', 'pencil')} active={isDrawingMode && drawSettings.tool === 'pencil'} disabled={!hasImage} />
-          <div className="mt-auto w-full flex justify-center pb-2">
+          
+          <div className="md:mt-auto md:w-full flex justify-center md:pb-2">
              <ToolButton icon={<Layers size={22} />} label="Watermark" onClick={() => switchToMode('watermark')} disabled={!hasImage} />
           </div>
         </aside>
 
-        <div className="flex-1 relative h-full overflow-hidden bg-gray-200/50">
+        {/* Middle Content Wrapper */}
+        <div className="flex-1 relative h-full overflow-hidden bg-gray-200/50 order-1 md:order-2 pb-16 md:pb-0">
+          
           <main ref={scrollContainerRef} className={`w-full h-full overflow-auto flex ${isCropMode ? 'bg-gray-900' : ''}`}>
+            
             <div className="m-auto p-8 relative"> 
               <div className={`transition-all duration-300 ${hasImage ? 'opacity-100 scale-100' : 'opacity-0 scale-95'} ${isCropMode ? 'shadow-none' : 'bg-white shadow-2xl rounded-sm border border-gray-300'} ${isDrawingMode ? 'cursor-crosshair' : ''}`}>
                 <canvas id="main-canvas"></canvas>
@@ -1145,8 +1291,9 @@ const App = () => {
             )}
           </main>
 
+          {/* Floating Controls (Zoom) */}
           {hasImage && !isCropMode && (
-            <div className="absolute bottom-6 right-6 flex items-center bg-white shadow-lg rounded-full px-2 py-1 border border-gray-200 animate-in slide-in-from-bottom-4 z-20">
+            <div className="absolute bottom-4 right-4 md:bottom-6 md:right-6 flex items-center bg-white shadow-lg rounded-full px-2 py-1 border border-gray-200 animate-in slide-in-from-bottom-4 z-20">
               <button onClick={() => changeZoom(-0.1)} className="p-2 hover:bg-gray-100 rounded-full text-gray-600 transition-colors"><Minus size={16} /></button>
               <span className="w-12 text-center text-xs font-mono font-bold text-gray-700">{Math.round(zoomRatio * 100)}%</span>
               <button onClick={() => changeZoom(0.1)} className="p-2 hover:bg-gray-100 rounded-full text-gray-600 transition-colors"><PlusSquare size={16} /></button>
@@ -1156,13 +1303,59 @@ const App = () => {
           )}
         </div>
 
-        <aside className="w-72 bg-white border-l flex flex-col shadow-inner overflow-y-auto z-10">
-          <div className="p-4 border-b bg-gray-50/50 flex items-center gap-2 font-bold text-gray-700">
-            <Settings size={18} className="text-blue-500" /> 
-            {isDrawingMode ? "Drawing tools" : "Object attributes"}
+        {/* 手機版文字編輯器 Overlay */}
+        {showMobileTextEditor && (
+          <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-start justify-center pt-16 md:pt-32 animate-in fade-in duration-200">
+            <div className="bg-white w-11/12 max-w-md p-5 rounded-2xl shadow-2xl flex flex-col gap-4 animate-in slide-in-from-bottom-10 duration-300">
+               <h3 className="font-bold text-gray-700 flex items-center gap-2"><Edit3 size={18} className="text-blue-500"/> Edit Text</h3>
+               <textarea 
+                 ref={mobileInputRef}
+                 value={mobileEditingText}
+                 onChange={(e) => setMobileEditingText(e.target.value)}
+                 className="w-full h-32 p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none resize-none text-lg"
+                 placeholder="Type something..."
+               />
+               <div className="flex gap-3">
+                 <button onClick={cancelMobileTextEdit} className="flex-1 py-3 rounded-xl bg-gray-100 text-gray-600 font-bold hover:bg-gray-200 transition-colors">Cancel</button>
+                 <button onClick={confirmMobileTextEdit} className="flex-1 py-3 rounded-xl bg-blue-600 text-white font-bold hover:bg-blue-700 transition-colors shadow-lg shadow-blue-200">Done</button>
+               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Right Sidebar (Attributes) - Responsive with Drawer/Slide-over */}
+        <div className={`
+          fixed inset-0 z-40 bg-black/20 backdrop-blur-sm transition-opacity duration-300 md:hidden
+          ${(isDrawingMode || activeObject) && showMobileProps && !showMobileTextEditor ? 'opacity-100' : 'opacity-0 pointer-events-none'}
+        `} onClick={() => setShowMobileProps(false)}></div>
+
+        <aside className={`
+          bg-white shadow-2xl z-50
+          fixed bottom-0 left-0 right-0 rounded-t-2xl border-t
+          md:relative md:border-l md:border-t-0 md:rounded-none md:shadow-inner md:w-72
+          flex flex-col overflow-y-auto transition-transform duration-300 ease-out
+          overscroll-contain
+          order-3
+          ${(isDrawingMode || activeObject) && showMobileProps && !showMobileTextEditor ? 'translate-y-0' : 'translate-y-full md:translate-y-0'}
+          max-h-[60vh] md:max-h-full
+        `}>
+          {/* Mobile Handle (Visual only) */}
+          <div className="w-full flex justify-center pt-2 pb-1 md:hidden">
+            <div className="w-12 h-1.5 bg-gray-300 rounded-full"></div>
+          </div>
+
+          <div className="p-4 border-b bg-white flex items-center justify-between font-bold text-gray-700 sticky top-0 z-10">
+            <div className="flex items-center gap-2">
+               <Settings size={18} className="text-blue-500" /> 
+               {isDrawingMode ? "Drawing tools" : "Object attributes"}
+            </div>
+            {/* Mobile Close Button */}
+            <button onClick={() => setShowMobileProps(false)} className="md:hidden p-1 rounded-full hover:bg-gray-200">
+               <ChevronDown size={20} />
+            </button>
           </div>
           
-          <div className="p-6 flex flex-col gap-8">
+          <div className="p-6 flex flex-col gap-8 pb-20 md:pb-6">
             {isCropMode ? (
               <div className="text-center py-12 flex flex-col items-center gap-4">
                 <div className="w-16 h-16 bg-blue-50 rounded-full flex items-center justify-center animate-pulse"><Crop size={28} className="text-blue-500" /></div>
@@ -1191,6 +1384,7 @@ const App = () => {
                     </section>
                   </>
                 )}
+                <button onClick={() => switchToMode('text')} className="w-full bg-blue-600 text-white py-2 rounded-lg text-sm font-bold mt-4 shadow-lg shadow-blue-200 hover:bg-blue-700 transition-colors">Complete</button>
               </div>
             ) : activeObject ? (
               <>
@@ -1215,8 +1409,8 @@ const App = () => {
                   </div>
                 )}
                 <div className="grid grid-cols-2 gap-3 mt-4">
-                   <button onClick={duplicateSelected} className="flex items-center justify-center gap-2 py-3 px-3 border border-gray-200 rounded-xl hover:bg-gray-50 text-sm font-bold text-gray-600 transition-all"><Copy size={16} /> Copy</button>
-                   <button onClick={deleteSelected} className="flex items-center justify-center gap-2 py-3 px-3 bg-red-50 text-red-600 border border-red-100 rounded-xl hover:bg-red-100 text-sm font-bold transition-all"><Trash2 size={16} /> Delete</button>
+                    <button onClick={duplicateSelected} className="flex items-center justify-center gap-2 py-3 px-3 border border-gray-200 rounded-xl hover:bg-gray-50 text-sm font-bold text-gray-600 transition-all"><Copy size={16} /> Copy</button>
+                    <button onClick={deleteSelected} className="flex items-center justify-center gap-2 py-3 px-3 bg-red-50 text-red-600 border border-red-100 rounded-xl hover:bg-red-100 text-sm font-bold transition-all"><Trash2 size={16} /> Delete</button>
                 </div>
                 {activeObject.type === 'i-text' && (
                   <section className="mt-4">
@@ -1231,7 +1425,7 @@ const App = () => {
                 <p className="text-gray-400 text-sm px-4 leading-relaxed">Click object to edit attributes</p>
               </div>
             ) : (
-               <div className="text-center py-12 text-gray-300 text-sm">Waiting...</div>
+                <div className="text-center py-12 text-gray-300 text-sm">Waiting...</div>
             )}
           </div>
         </aside>
