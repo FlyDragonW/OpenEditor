@@ -48,7 +48,6 @@ const App = () => {
   
   // 手機版屬性面板控制
   const [showMobileProps, setShowMobileProps] = useState(false);
-  // 用於判斷是否為手機版
   const [isMobileView, setIsMobileView] = useState(false);
 
   // 手機版文字編輯專用狀態
@@ -81,7 +80,7 @@ const App = () => {
   const historyIndex = useRef(-1);
   const isUndoing = useRef(false);
 
-  // 關鍵修正：用於標記是否正在進行內部物件置換 (如更新浮水印)
+  // 內部更新旗標
   const isInternalUpdate = useRef(false);
 
   // 浮水印設定
@@ -305,7 +304,6 @@ const App = () => {
           setActiveObject(obj);
           
           if (!obj) {
-             // 如果不是內部更新，才關閉面板
              if (!isInternalUpdate.current) {
                setShowMobileProps(false);
              }
@@ -326,10 +324,8 @@ const App = () => {
         fabricCanvas.on('selection:created', updateSelection);
         fabricCanvas.on('selection:updated', updateSelection);
         
-        // 修正：selection:cleared 增加 isInternalUpdate 判斷
         fabricCanvas.on('selection:cleared', () => {
           if (isInternalUpdate.current) return;
-          
           setActiveObject(null);
           setShowMobileProps(false);
           setWatermarkConfig(prev => ({ ...prev, text: "" }));
@@ -363,7 +359,6 @@ const App = () => {
         }
     };
     const handleAdded = (e) => {
-        // 如果是內部更新，不存歷史紀錄 (因為 updateWatermarkSettings 會手動存)
         if (e.target && !e.target.excludeFromExport && !isUndoing.current && !isInternalUpdate.current) {
             saveHistory();
         }
@@ -430,6 +425,17 @@ const App = () => {
     };
   }, [isDrawingMode, drawSettings.tool, drawSettings.color, drawSettings.width, canvas]);
 
+  // --- 橡皮擦邏輯 ---
+  const isErasable = (obj) => {
+    if (!obj) return false;
+    if (obj.backgroundImage) return false;
+    if (obj.excludeFromExport) return false;
+    if (obj.type === 'image') return false;
+    if (obj.type === 'i-text' || obj.type === 'text') return false;
+    if (obj.isWatermark || obj.type === 'group') return false;
+    return ['path', 'rect', 'circle', 'ellipse', 'line'].includes(obj.type);
+  };
+
   const onShapeDown = (o) => {
     if (!canvas) return;
     const pointer = canvas.getPointer(o.e);
@@ -438,13 +444,13 @@ const App = () => {
 
     if (drawSettings.tool === 'eraser') {
       const target = canvas.findTarget(o.e); 
-      if (target && !target.backgroundImage && !target.excludeFromExport) {
+      if (target && isErasable(target)) {
         canvas.remove(target);
         saveHistory();
       } else {
         const objects = canvas.getObjects().reverse(); 
         for (let obj of objects) {
-          if (obj.containsPoint(pointer) && !obj.excludeFromExport && !obj.backgroundImage) {
+          if (obj.containsPoint(pointer) && isErasable(obj)) {
             canvas.remove(obj);
             saveHistory();
             break; 
@@ -495,7 +501,7 @@ const App = () => {
       let removed = false;
       for (let i = objects.length - 1; i >= 0; i--) {
         const obj = objects[i];
-        if (obj.containsPoint(pointer) && !obj.excludeFromExport && !obj.backgroundImage) {
+        if (obj.containsPoint(pointer) && isErasable(obj)) {
           canvas.remove(obj);
           removed = true;
         }
@@ -541,8 +547,7 @@ const App = () => {
     if (shape) {
       shape.setCoords();
       shape.set({ selectable: true, evented: true }); 
-      // saveHistory is handled by object:added (but manually saved for shape logic in onShapeUp usually if not triggered by added)
-      // Here we rely on object:added for shapes as they are added via canvas.add()
+      // saveHistory is handled by object:added
     }
     drawRef.current.activeShape = null;
   };
@@ -587,7 +592,6 @@ const App = () => {
       case 'draw':
         updateDrawSettings('tool', subTool || 'pencil');
         setIsDrawingMode(true);
-        // 手機版：切換到繪圖模式時，自動打開屬性面板供選色
         setShowMobileProps(true);
         canvas.discardActiveObject();
         canvas.requestRenderAll();
@@ -835,7 +839,7 @@ const App = () => {
     const center = getVisibleCenter();
     const currentZoom = zoomRatioRef.current;
     const baseWidth = baseDimensions.current.width;
-    // 修正：手機版預設字體加大
+    
     const isMobile = window.innerWidth < 768;
     const fontSize = Math.max(isMobile ? 24 : 12, (baseWidth / (isMobile ? 15 : 25)) / currentZoom);
 
@@ -851,14 +855,10 @@ const App = () => {
     canvas.add(text);
     canvas.setActiveObject(text);
     
-    // 如果是桌面版，直接進入編輯
     if (!isMobile) {
       text.enterEditing();
       text.selectAll();
-    } 
-    // 如果是手機版，會由 text:editing:entered 事件接手處理彈出窗
-    else {
-      // 觸發一次 enterEditing 以觸發事件，然後事件處理器會接手
+    } else {
       text.enterEditing();
     }
   };
@@ -971,7 +971,6 @@ const App = () => {
     const firstObj = activeObject.getObjects()[0];
     const currentFill = firstObj ? firstObj.fill : 'rgba(0,0,0,0.15)';
     
-    // 關鍵：標記內部更新
     isInternalUpdate.current = true;
     canvas.remove(activeObject);
     const newGroup = generateWatermarkGroup(
@@ -984,7 +983,7 @@ const App = () => {
     );
     canvas.add(newGroup);
     canvas.setActiveObject(newGroup);
-    isInternalUpdate.current = false; // 重置
+    isInternalUpdate.current = false; 
 
     canvas.requestRenderAll();
     saveHistory();
@@ -1117,21 +1116,56 @@ const App = () => {
     if (!hasImage) return;
     setIsExporting(true);
     
-    if (exportFormat !== 'pdf' || !pdfDoc) {
-      const dataURL = canvas.toDataURL({
-        format: exportFormat === 'jpg' ? 'jpeg' : 'png',
-        quality: 1,
-        multiplier: exportMultiplier / zoomRatio 
-      });
-      const link = document.createElement('a');
-      link.href = dataURL;
-      link.download = `openeditor-export.${exportFormat}`;
-      link.click();
-      setIsExporting(false);
-      setShowExportModal(false);
-      return;
+    // 修正: 判斷單頁圖片或 PDF
+    if (exportFormat !== 'pdf' || (!pdfDoc && exportFormat !== 'pdf')) { // 這行邏輯其實有點冗餘，修正為以下
+       // 只要格式不是 pdf，或者沒有 pdfDoc (代表是單張圖) 但使用者選了其他格式...
+       // 簡化邏輯：
+       if (exportFormat !== 'pdf') {
+         const dataURL = canvas.toDataURL({
+            format: exportFormat === 'jpg' ? 'jpeg' : 'png',
+            quality: 1,
+            multiplier: exportMultiplier / zoomRatio 
+         });
+         const link = document.createElement('a');
+         link.href = dataURL;
+         link.download = `pixelcraft-export.${exportFormat}`;
+         link.click();
+         setIsExporting(false);
+         setShowExportModal(false);
+         return;
+       }
+    }
+    
+    // 如果走到這裡，表示 exportFormat 是 'pdf'
+    
+    // 單張圖片轉 PDF
+    if (!pdfDoc) {
+         const { jsPDF } = window.jspdf;
+         // 取得原始圖片尺寸
+         const imgWidth = baseDimensions.current.width * exportMultiplier;
+         const imgHeight = baseDimensions.current.height * exportMultiplier;
+         
+         const pdf = new jsPDF({
+           orientation: imgWidth > imgHeight ? 'landscape' : 'portrait',
+           unit: 'px',
+           format: [imgWidth, imgHeight]
+         });
+         
+         const dataURL = canvas.toDataURL({
+             format: 'png',
+             quality: 1,
+             multiplier: exportMultiplier / zoomRatio
+         });
+         
+         pdf.addImage(dataURL, 'PNG', 0, 0, imgWidth, imgHeight);
+         pdf.save('pixelcraft-export.pdf');
+         
+         setIsExporting(false);
+         setShowExportModal(false);
+         return;
     }
 
+    // 多頁 PDF 導出
     saveCurrentPageState(); 
     const { jsPDF } = window.jspdf;
     const pdf = new jsPDF();
@@ -1191,7 +1225,7 @@ const App = () => {
 
   return (
     <div className="flex flex-col h-screen bg-gray-100 font-sans text-gray-800">
-      <header className="bg-white border-b px-6 py-3 flex items-center justify-between shadow-sm z-20">
+      <header className="bg-white border-b px-6 py-3 flex items-center justify-between shadow-sm z-[60]">
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
             <div className="bg-blue-600 p-2 rounded-lg">
