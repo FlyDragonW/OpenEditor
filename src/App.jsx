@@ -1066,13 +1066,13 @@ const App = () => {
 
   return (
     <div className="flex flex-col h-screen bg-gray-100 font-sans text-gray-800">
-      <header className="bg-white border-b px-4 py-2 md:px-6 md:py-3 flex flex-wrap md:flex-nowrap items-center justify-between shadow-sm z-20 gap-2 shrink-0">
+      <header className="bg-white border-b px-6 py-3 flex items-center justify-between shadow-sm z-20">
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
             <div className="bg-blue-600 p-2 rounded-lg">
               <ImageIcon className="text-white w-5 h-5" />
             </div>
-            <h1 className="font-bold text-lg md:text-xl tracking-tight">OpenEditor <span className="text-blue-600 font-medium text-sm ml-1">Beta</span></h1>
+            <h1 className="font-bold text-xl tracking-tight">OpenEditor <span className="text-blue-600 font-medium text-sm ml-1">Beta</span></h1>
           </div>
 
           {totalPages > 1 && (
@@ -1087,7 +1087,7 @@ const App = () => {
         <div className="flex items-center gap-3">
           {!isCropMode ? (
             <div className="relative">
-              <button onClick={() => hasImage && setShowExportModal(!showExportModal)} disabled={!hasImage || isExporting} className={`flex items-center gap-2 px-3 py-1.5 md:px-5 md:py-2 rounded-full transition-all font-semibold shadow-lg text-sm md:text-base ${hasImage ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-100' : 'bg-gray-300 text-gray-500 cursor-not-allowed'}`}>
+              <button onClick={() => hasImage && setShowExportModal(!showExportModal)} disabled={!hasImage || isExporting} className={`flex items-center gap-2 px-5 py-2 rounded-full transition-all font-semibold shadow-lg ${hasImage ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-100' : 'bg-gray-300 text-gray-500 cursor-not-allowed'}`}>
                 {isExporting ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div> : <Download size={18} />}
                 {isExporting ? 'Processing...' : 'Save file'}
               </button>
@@ -1106,39 +1106,36 @@ const App = () => {
             </div>
           ) : (
             <div className="flex gap-2">
-              <button onClick={applyCrop} className="bg-green-600 text-white px-3 py-1.5 md:px-5 md:py-2 rounded-full flex items-center gap-2 font-medium shadow-md text-sm md:text-base"><Check size={18} /> Crop</button>
-              <button onClick={cancelCrop} className="bg-gray-200 text-gray-700 px-3 py-1.5 md:px-5 md:py-2 rounded-full flex items-center gap-2 font-medium hover:bg-gray-300 transition-colors text-sm md:text-base"><X size={18} /> Cancel</button>
+              <button onClick={applyCrop} className="bg-green-600 text-white px-5 py-2 rounded-full flex items-center gap-2 font-medium shadow-md"><Check size={18} /> Crop</button>
+              <button onClick={cancelCrop} className="bg-gray-200 text-gray-700 px-5 py-2 rounded-full flex items-center gap-2 font-medium hover:bg-gray-300 transition-colors"><X size={18} /> Cancel</button>
             </div>
           )}
         </div>
       </header>
 
-      <div className="flex flex-1 overflow-hidden relative flex-col md:flex-row">
-        <aside className="w-full md:w-20 bg-white border-t md:border-t-0 md:border-r flex flex-row md:flex-col items-center justify-center md:justify-start py-2 md:py-6 gap-4 shadow-sm z-10 overflow-x-auto md:overflow-y-auto shrink-0 order-last md:order-first">
+      <div className="flex flex-1 overflow-hidden relative">
+        <aside className="w-20 bg-white border-r flex flex-col items-center py-6 gap-4 shadow-sm z-10 overflow-y-auto">
           <ToolButton icon={<Upload size={22} />} label="Open" onClick={() => switchToMode('open')} disabled={isCropMode || isDrawingMode} />
           <ToolButton icon={<Crop size={22} />} label="Crop" onClick={() => switchToMode('crop')} active={isCropMode} disabled={!hasImage} />
           <ToolButton icon={<Type size={22} />} label="Text" onClick={() => switchToMode('text')} disabled={!hasImage} />
           <ToolButton icon={<ImageIcon size={22} />} label="Image" onClick={() => switchToMode('image')} disabled={!hasImage} />
           <ToolButton icon={<PenTool size={22} />} label="Draw" onClick={() => switchToMode('draw', 'pencil')} active={isDrawingMode && drawSettings.tool === 'pencil'} disabled={!hasImage} />
-          <div className="hidden md:flex mt-auto w-full justify-center pb-2">
-             <ToolButton icon={<Layers size={22} />} label="Watermark" onClick={() => switchToMode('watermark')} disabled={!hasImage} />
-          </div>
-          <div className="md:hidden">
+          <div className="mt-auto w-full flex justify-center pb-2">
              <ToolButton icon={<Layers size={22} />} label="Watermark" onClick={() => switchToMode('watermark')} disabled={!hasImage} />
           </div>
         </aside>
 
         <div className="flex-1 relative h-full overflow-hidden bg-gray-200/50">
           <main ref={scrollContainerRef} className={`w-full h-full overflow-auto flex ${isCropMode ? 'bg-gray-900' : ''}`}>
-            <div className="m-auto p-4 md:p-8 relative"> 
-              <div className={`transition-all duration-300 ${hasImage ? 'opacity-100 scale-100' : 'opacity-0 scale-95'} ${isCropMode ? 'shadow-none' : 'bg-white shadow-2xl rounded-sm border border-gray-300'} ${isDrawingMode ? 'cursor-crosshair touch-none' : ''}`}>
+            <div className="m-auto p-8 relative"> 
+              <div className={`transition-all duration-300 ${hasImage ? 'opacity-100 scale-100' : 'opacity-0 scale-95'} ${isCropMode ? 'shadow-none' : 'bg-white shadow-2xl rounded-sm border border-gray-300'} ${isDrawingMode ? 'cursor-crosshair' : ''}`}>
                 <canvas id="main-canvas"></canvas>
               </div>
             </div>
 
             {!hasImage && (
               <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none z-0">
-                <div className="bg-white/90 backdrop-blur-md p-6 md:p-10 rounded-3xl border-2 border-dashed border-blue-200 flex flex-col items-center shadow-xl animate-in fade-in zoom-in duration-300 mx-4">
+                <div className="bg-white/90 backdrop-blur-md p-10 rounded-3xl border-2 border-dashed border-blue-200 flex flex-col items-center shadow-xl animate-in fade-in zoom-in duration-300">
                   <div className="bg-blue-50 p-4 rounded-full mb-4"><Upload size={48} className="text-blue-500" /></div>
                   <h2 className="text-xl font-bold text-gray-700 mb-2">Start Editing</h2>
                   <p className="text-gray-500 text-sm mb-6 text-center">Supports JPG, PNG, PDF </p>
@@ -1149,7 +1146,7 @@ const App = () => {
           </main>
 
           {hasImage && !isCropMode && (
-            <div className="absolute bottom-4 right-4 md:bottom-6 md:right-6 flex items-center bg-white shadow-lg rounded-full px-2 py-1 border border-gray-200 animate-in slide-in-from-bottom-4 z-20">
+            <div className="absolute bottom-6 right-6 flex items-center bg-white shadow-lg rounded-full px-2 py-1 border border-gray-200 animate-in slide-in-from-bottom-4 z-20">
               <button onClick={() => changeZoom(-0.1)} className="p-2 hover:bg-gray-100 rounded-full text-gray-600 transition-colors"><Minus size={16} /></button>
               <span className="w-12 text-center text-xs font-mono font-bold text-gray-700">{Math.round(zoomRatio * 100)}%</span>
               <button onClick={() => changeZoom(0.1)} className="p-2 hover:bg-gray-100 rounded-full text-gray-600 transition-colors"><PlusSquare size={16} /></button>
@@ -1159,7 +1156,7 @@ const App = () => {
           )}
         </div>
 
-        <aside className="w-full md:w-72 h-[30vh] md:h-auto bg-white border-t md:border-t-0 md:border-l flex flex-col shadow-inner overflow-y-auto z-10 shrink-0">
+        <aside className="w-72 bg-white border-l flex flex-col shadow-inner overflow-y-auto z-10">
           <div className="p-4 border-b bg-gray-50/50 flex items-center gap-2 font-bold text-gray-700">
             <Settings size={18} className="text-blue-500" /> 
             {isDrawingMode ? "Drawing tools" : "Object attributes"}
