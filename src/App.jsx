@@ -1128,7 +1128,7 @@ const App = () => {
          });
          const link = document.createElement('a');
          link.href = dataURL;
-         link.download = `pixelcraft-export.${exportFormat}`;
+         link.download = `openeditor-export.${exportFormat}`;
          link.click();
          setIsExporting(false);
          setShowExportModal(false);
@@ -1158,7 +1158,7 @@ const App = () => {
          });
          
          pdf.addImage(dataURL, 'PNG', 0, 0, imgWidth, imgHeight);
-         pdf.save('pixelcraft-export.pdf');
+         pdf.save('openeditor-export.pdf');
          
          setIsExporting(false);
          setShowExportModal(false);
@@ -1213,7 +1213,7 @@ const App = () => {
         tempFabric.dispose();
       }
       
-      pdf.save('pixelcraft-multipage.pdf');
+      pdf.save('openeditor-multipage.pdf');
     } catch (e) {
       console.error(e);
       alert("Failed to export");
@@ -1248,7 +1248,7 @@ const App = () => {
             <div className="relative">
               <button onClick={() => hasImage && setShowExportModal(!showExportModal)} disabled={!hasImage || isExporting} className={`flex items-center gap-2 px-5 py-2 rounded-full transition-all font-semibold shadow-lg ${hasImage ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-100' : 'bg-gray-300 text-gray-500 cursor-not-allowed'}`}>
                 {isExporting ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div> : <Download size={18} />}
-                {isExporting ? 'Processing...' : 'Save file'}
+                {isExporting ? 'Processing...' : 'Export'}
               </button>
               {showExportModal && (
                 <div className="absolute right-0 top-14 bg-white rounded-xl shadow-xl border border-gray-100 p-4 w-64 z-50 animate-in slide-in-from-top-2 duration-200">
