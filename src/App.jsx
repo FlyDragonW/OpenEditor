@@ -99,7 +99,11 @@ const App = () => {
   const overlayInputRef = useRef(null);
   const watermarkInputRef = useRef(null);
   
+  // 裁切相關
   const cropUI = useRef({ cropZone: null, dimmingRects: [], gridLines: [] });
+  const cropTargetRef = useRef(null); 
+  const cropLimitsRef = useRef({ left: 0, top: 0, width: 0, height: 0 });
+
   const drawRef = useRef({ isMouseDown: false, startPos: { x: 0, y: 0 }, activeShape: null, isDrawingMode: false }); 
 
   const [exportMultiplier, setExportMultiplier] = useState(1);
@@ -592,6 +596,7 @@ const App = () => {
       case 'draw':
         updateDrawSettings('tool', subTool || 'pencil');
         setIsDrawingMode(true);
+        // 手機版：切換到繪圖模式時，自動打開屬性面板供選色
         setShowMobileProps(true);
         canvas.discardActiveObject();
         canvas.requestRenderAll();
@@ -1017,7 +1022,6 @@ const App = () => {
     saveHistory();
   };
 
-  // --- Crop Logic (Same as before) ---
   const updateCropUI = (cropRect) => {
     const { dimmingRects, gridLines } = cropUI.current;
     const left = cropRect.left;
@@ -1039,22 +1043,34 @@ const App = () => {
     gridLines.forEach(line => line.setCoords());
   };
   const constrainMovement = (obj) => {
-    const cw = baseDimensions.current.width;
-    const ch = baseDimensions.current.height;
-    const w = obj.getScaledWidth();
-    const h = obj.getScaledHeight();
-    if (obj.left < 0) obj.left = 0;
-    if (obj.top < 0) obj.top = 0;
-    if (obj.left + w > cw) obj.left = cw - w;
-    if (obj.top + h > ch) obj.top = ch - h;
+    const limits = cropLimitsRef.current;
+    const objWidth = obj.getScaledWidth();
+    const objHeight = obj.getScaledHeight();
+    if (obj.left < limits.left) obj.left = limits.left;
+    if (obj.top < limits.top) obj.top = limits.top;
+    if (obj.left + objWidth > limits.left + limits.width) {
+       obj.left = limits.left + limits.width - objWidth;
+    }
+    if (obj.top + objHeight > limits.top + limits.height) {
+       obj.top = limits.top + limits.height - objHeight;
+    }
   };
   const constrainScaling = (obj) => {
-    const cw = baseDimensions.current.width;
-    const ch = baseDimensions.current.height;
-    if (obj.left < 0) { obj.scaleX = (obj.left + obj.getScaledWidth()) / obj.width; obj.left = 0; }
-    if (obj.top < 0) { obj.scaleY = (obj.top + obj.getScaledHeight()) / obj.height; obj.top = 0; }
-    if (obj.left + obj.getScaledWidth() > cw) { obj.scaleX = (cw - obj.left) / obj.width; }
-    if (obj.top + obj.getScaledHeight() > ch) { obj.scaleY = (ch - obj.top) / obj.height; }
+    const limits = cropLimitsRef.current;
+    if (obj.left < limits.left) { 
+        obj.scaleX = (obj.left + obj.getScaledWidth() - limits.left) / obj.width; 
+        obj.left = limits.left; 
+    }
+    if (obj.top < limits.top) { 
+        obj.scaleY = (obj.top + obj.getScaledHeight() - limits.top) / obj.height; 
+        obj.top = limits.top; 
+    }
+    if (obj.left + obj.getScaledWidth() > limits.left + limits.width) { 
+        obj.scaleX = (limits.left + limits.width - obj.left) / obj.width; 
+    }
+    if (obj.top + obj.getScaledHeight() > limits.top + limits.height) { 
+        obj.scaleY = (limits.top + limits.height - obj.top) / obj.height; 
+    }
   };
   const startCrop = () => {
     if (!canvas || !hasImage) return;
@@ -1063,19 +1079,64 @@ const App = () => {
       setIsDrawingMode(false);
       canvas.isDrawingMode = false;
     }
+
+    const active = canvas.getActiveObject();
+    let initialCrop = {};
+    let limits = {};
+
+    if (active && active.type === 'image') {
+        cropTargetRef.current = active;
+        const boundingRect = active.getBoundingRect();
+        initialCrop = {
+            left: boundingRect.left,
+            top: boundingRect.top,
+            width: boundingRect.width,
+            height: boundingRect.height
+        };
+        limits = {
+            left: boundingRect.left,
+            top: boundingRect.top,
+            width: boundingRect.width,
+            height: boundingRect.height
+        };
+    } else {
+        cropTargetRef.current = null;
+        const cw = baseDimensions.current.width;
+        const ch = baseDimensions.current.height;
+        const margin = 30;
+        initialCrop = { left: margin, top: margin, width: cw - (margin * 2), height: ch - (margin * 2) };
+        limits = { left: 0, top: 0, width: cw, height: ch };
+    }
+    
+    cropLimitsRef.current = limits;
+
     setIsCropMode(true);
     canvas.discardActiveObject();
     canvas.getObjects().forEach(obj => { obj.selectable = false; obj.evented = false; });
+    
     const dimmingProps = { fill: 'rgba(0, 0, 0, 0.6)', selectable: false, evented: false, excludeFromExport: true };
     const dimmingRects = Array(4).fill(null).map(() => new window.fabric.Rect(dimmingProps));
     dimmingRects.forEach(r => canvas.add(r));
     const gridProps = { stroke: 'rgba(255, 255, 255, 0.5)', strokeWidth: 1, selectable: false, evented: false, excludeFromExport: true };
     const gridLines = Array(4).fill(null).map(() => new window.fabric.Line([0,0,0,0], gridProps));
     gridLines.forEach(l => canvas.add(l));
-    const cw = baseDimensions.current.width;
-    const ch = baseDimensions.current.height;
-    const margin = 30;
-    const cropZone = new window.fabric.Rect({ left: margin, top: margin, width: cw - (margin*2), height: ch - (margin*2), fill: 'transparent', stroke: '#ffffff', strokeWidth: 2, strokeUniform: true, cornerColor: '#ffffff', cornerStrokeColor: '#000000', cornerSize: 14, cornerStyle: 'circle', transparentCorners: false, lockRotation: true, hasRotatingPoint: false, lockScalingFlip: true });
+
+    const cropZone = new window.fabric.Rect({ 
+        ...initialCrop,
+        fill: 'transparent', 
+        stroke: '#ffffff', 
+        strokeWidth: 2, 
+        strokeUniform: true, 
+        cornerColor: '#ffffff', 
+        cornerStrokeColor: '#000000', 
+        cornerSize: 14, 
+        cornerStyle: 'circle', 
+        transparentCorners: false, 
+        lockRotation: true, 
+        hasRotatingPoint: false, 
+        lockScalingFlip: true 
+    });
+
     canvas.add(cropZone);
     canvas.setActiveObject(cropZone);
     cropUI.current = { cropZone, dimmingRects, gridLines };
@@ -1101,14 +1162,57 @@ const App = () => {
     const top = cropZone.top;
     const width = cropZone.width * cropZone.scaleX;
     const height = cropZone.height * cropZone.scaleY;
+    
+    const targetObj = cropTargetRef.current;
+    
     cancelCrop(); 
-    const croppedData = canvas.toDataURL({ left, top, width, height, format: 'png', multiplier: exportMultiplier });
-    window.fabric.Image.fromURL(croppedData, (img) => {
-      canvas.clear();
-      fitImageToScreen(canvas, img, false); 
-      setIsCropMode(false);
-      saveHistory(); 
-    });
+
+    if (targetObj) {
+        const allObjects = canvas.getObjects();
+        const originalVisibility = allObjects.map(o => o.visible);
+        const originalBg = canvas.backgroundImage;
+        allObjects.forEach(o => o.visible = false);
+        canvas.backgroundImage = null; 
+        targetObj.visible = true;
+        canvas.backgroundColor = 'transparent'; 
+
+        const croppedData = canvas.toDataURL({
+            left: left,
+            top: top,
+            width: width,
+            height: height,
+            format: 'png',
+            multiplier: exportMultiplier
+        });
+
+        allObjects.forEach((o, i) => o.visible = originalVisibility[i]);
+        canvas.backgroundImage = originalBg;
+        
+        window.fabric.Image.fromURL(croppedData, (img) => {
+            img.set({
+                left: left, 
+                top: top,
+                originX: 'left',
+                originY: 'top',
+                scaleX: 1 / exportMultiplier, 
+                scaleY: 1 / exportMultiplier
+            });
+            canvas.remove(targetObj);
+            canvas.add(img);
+            canvas.setActiveObject(img);
+            canvas.requestRenderAll();
+            saveHistory();
+        });
+        setIsCropMode(false);
+    } else {
+        const croppedData = canvas.toDataURL({ left, top, width, height, format: 'png', multiplier: exportMultiplier });
+        window.fabric.Image.fromURL(croppedData, (img) => {
+          canvas.clear();
+          fitImageToScreen(canvas, img, false); 
+          setIsCropMode(false);
+          saveHistory(); 
+        });
+    }
   };
 
   // --- Export ---
@@ -1116,56 +1220,23 @@ const App = () => {
     if (!hasImage) return;
     setIsExporting(true);
     
-    // 修正: 判斷單頁圖片或 PDF
-    if (exportFormat !== 'pdf' || (!pdfDoc && exportFormat !== 'pdf')) { // 這行邏輯其實有點冗餘，修正為以下
-       // 只要格式不是 pdf，或者沒有 pdfDoc (代表是單張圖) 但使用者選了其他格式...
-       // 簡化邏輯：
-       if (exportFormat !== 'pdf') {
-         const dataURL = canvas.toDataURL({
-            format: exportFormat === 'jpg' ? 'jpeg' : 'png',
-            quality: 1,
-            multiplier: exportMultiplier / zoomRatio 
-         });
-         const link = document.createElement('a');
-         link.href = dataURL;
-         link.download = `openeditor-export.${exportFormat}`;
-         link.click();
-         setIsExporting(false);
-         setShowExportModal(false);
-         return;
-       }
-    }
-    
-    // 如果走到這裡，表示 exportFormat 是 'pdf'
-    
-    // 單張圖片轉 PDF
-    if (!pdfDoc) {
-         const { jsPDF } = window.jspdf;
-         // 取得原始圖片尺寸
-         const imgWidth = baseDimensions.current.width * exportMultiplier;
-         const imgHeight = baseDimensions.current.height * exportMultiplier;
-         
-         const pdf = new jsPDF({
-           orientation: imgWidth > imgHeight ? 'landscape' : 'portrait',
-           unit: 'px',
-           format: [imgWidth, imgHeight]
-         });
-         
-         const dataURL = canvas.toDataURL({
-             format: 'png',
-             quality: 1,
-             multiplier: exportMultiplier / zoomRatio
-         });
-         
-         pdf.addImage(dataURL, 'PNG', 0, 0, imgWidth, imgHeight);
-         pdf.save('openeditor-export.pdf');
-         
-         setIsExporting(false);
-         setShowExportModal(false);
-         return;
+    if (exportFormat !== 'pdf' || !pdfDoc) {
+      const dataURL = canvas.toDataURL({
+        format: exportFormat === 'jpg' ? 'jpeg' : 'png',
+        quality: 1,
+        multiplier: exportMultiplier / zoomRatio 
+      });
+      const link = document.createElement('a');
+      link.href = dataURL;
+      link.download = `pixelcraft-export.${exportFormat}`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setIsExporting(false);
+      setShowExportModal(false);
+      return;
     }
 
-    // 多頁 PDF 導出
     saveCurrentPageState(); 
     const { jsPDF } = window.jspdf;
     const pdf = new jsPDF();
@@ -1213,7 +1284,7 @@ const App = () => {
         tempFabric.dispose();
       }
       
-      pdf.save('openeditor-multipage.pdf');
+      pdf.save('pixelcraft-multipage.pdf');
     } catch (e) {
       console.error(e);
       alert("Failed to export");
@@ -1248,7 +1319,7 @@ const App = () => {
             <div className="relative">
               <button onClick={() => hasImage && setShowExportModal(!showExportModal)} disabled={!hasImage || isExporting} className={`flex items-center gap-2 px-5 py-2 rounded-full transition-all font-semibold shadow-lg ${hasImage ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-100' : 'bg-gray-300 text-gray-500 cursor-not-allowed'}`}>
                 {isExporting ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div> : <Download size={18} />}
-                {isExporting ? 'Processing...' : 'Export'}
+                {isExporting ? 'Processing...' : 'Save file'}
               </button>
               {showExportModal && (
                 <div className="absolute right-0 top-14 bg-white rounded-xl shadow-xl border border-gray-100 p-4 w-64 z-50 animate-in slide-in-from-top-2 duration-200">
@@ -1418,7 +1489,7 @@ const App = () => {
                     </section>
                   </>
                 )}
-                <button onClick={() => switchToMode('text')} className="w-full bg-blue-600 text-white py-2 rounded-lg text-sm font-bold mt-4 shadow-lg shadow-blue-200 hover:bg-blue-700 transition-colors">Complete</button>
+                <button onClick={() => setIsDrawingMode(false)} className="w-full bg-blue-600 text-white py-2 rounded-lg text-sm font-bold mt-4 shadow-lg shadow-blue-200 hover:bg-blue-700 transition-colors">Complete</button>
               </div>
             ) : activeObject ? (
               <>
